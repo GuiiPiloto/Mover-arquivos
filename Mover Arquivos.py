@@ -14,15 +14,9 @@ def find_prestados_in_company(company_path):
             return os.path.join(root, "PRESTADOS")
     return None
 
-def find_company_in_z(company_name, dest_root, output_text=None):
+def find_company_in_z(company_name, dest_root):
     company_norm = normalize_text(company_name)
     company_words = set(company_norm.split())
-    # Palavras genéricas a ignorar na comparação
-    generic_words = {"LTDA", "CIA", "E", "ME", "SA", "INDUSTRIAIS", "SERVICOS", "SOLUCOES"}
-    company_words_filtered = company_words - generic_words
-    
-    if not company_words_filtered:  # Se todas as palavras forem genéricas, usa o nome completo
-        company_words_filtered = company_words
     
     best_match = None
     best_score = 0
@@ -30,29 +24,17 @@ def find_company_in_z(company_name, dest_root, output_text=None):
     for folder in os.listdir(dest_root):
         folder_norm = normalize_text(folder)
         folder_words = set(folder_norm.split())
-        folder_words_filtered = folder_words - generic_words
-        
-        if not folder_words_filtered:  # Se todas as palavras forem genéricas, usa o nome completo
-            folder_words_filtered = folder_words
-        
-        common_words = company_words_filtered.intersection(folder_words_filtered)
+        common_words = company_words.intersection(folder_words)
         score = len(common_words)
         
-        # Exige que pelo menos 50% das palavras filtradas da empresa estejam no nome da pasta
-        min_common_words = max(1, len(company_words_filtered) // 2)
-        if score >= min_common_words:
+        if score > 0 and (len(folder_words) <= len(company_words) or "LTDA" in company_words):
             if score > best_score:
                 best_score = score
                 best_match = folder
     
-    if best_match:
-        return os.path.join(dest_root, best_match)
-    else:
-        if output_text:
-            output_text.insert(tk.END, f"Nenhum match encontrado para '{company_name}' em {dest_root}\n")
-        return None
+    return os.path.join(dest_root, best_match) if best_match else None
 
-def scan_paths(output_text):
+def scan_paths():
     source_root = r"C:\Users\FISCAL01\Downloads"
     dest_root = r"Z:\\"
     results = []
@@ -62,7 +44,7 @@ def scan_paths(output_text):
         if not os.path.isdir(source_path):
             continue
         
-        company_dest_path = find_company_in_z(company, dest_root, output_text)
+        company_dest_path = find_company_in_z(company, dest_root)
         if not company_dest_path:
             results.append({"company": company, "path": f"Erro: Empresa não encontrada em Z:\\", "approved": False, "target": "PRESTADOS"})
             continue
@@ -101,8 +83,6 @@ def move_files(results, output_text):
             output_text.insert(tk.END, f"Pulando {item['company']} - caminho inválido: {dest_path}\n")
             continue
         
-        moved_something = False
-        
         if item["target"] == "PRESTADOS":
             # Lógica de PRESTADOS (sem alterações)
             for filename in os.listdir(source_path):
@@ -117,7 +97,6 @@ def move_files(results, output_text):
                     try:
                         shutil.move(source_file, dest_file)
                         output_text.insert(tk.END, f"Movido: {filename} de '{item['company']}' para {dest_path}\n")
-                        moved_something = True
                     except Exception as e:
                         output_text.insert(tk.END, f"Erro ao mover {filename} de '{item['company']}': {e}\n")
         else:  # item["target"] == "AR"
@@ -136,23 +115,16 @@ def move_files(results, output_text):
             
             output_text.insert(tk.END, f"Subpastas encontradas em '{item['company']}': {', '.join(entry_folders)}\n")
             
-            # Remove subpastas no destino que são variações de Entrada ou Saída
-            folders_to_remove = []
-            for folder in os.listdir(dest_path):
-                folder_path = os.path.join(dest_path, folder)
-                if os.path.isdir(folder_path):
-                    normalized_folder = normalize_text(folder)
-                    if normalized_folder in ("ENTRADA", "ENTRADAS", "SAIDA", "SAIDAS"):
-                        folders_to_remove.append((folder, normalized_folder))
-            
-            for folder, normalized_folder in folders_to_remove:
+            # Remove subpastas Entrada e Saída existentes no destino
+            for folder in entry_folders:
                 dest_folder_path = os.path.join(dest_path, folder)
-                try:
-                    shutil.rmtree(dest_folder_path)
-                    output_text.insert(tk.END, f"Subpasta '{folder}' no destino foi identificada como variação de '{normalized_folder}' e substituída.\n")
-                except Exception as e:
-                    output_text.insert(tk.END, f"Erro ao remover subpasta '{folder}' em {dest_path}: {e}\n")
-                    continue
+                if os.path.exists(dest_folder_path):
+                    try:
+                        shutil.rmtree(dest_folder_path)
+                        output_text.insert(tk.END, f"Subpasta '{folder}' já existia em {dest_path} e foi substituída.\n")
+                    except Exception as e:
+                        output_text.insert(tk.END, f"Erro ao remover subpasta '{folder}' em {dest_path}: {e}\n")
+                        continue
             
             # Move as subpastas Entrada e Saída
             for folder in entry_folders:
@@ -161,95 +133,77 @@ def move_files(results, output_text):
                 try:
                     shutil.move(source_folder_path, dest_folder_path)
                     output_text.insert(tk.END, f"Movida subpasta '{folder}' de '{item['company']}' para {dest_folder_path}\n")
-                    moved_something = True
                 except Exception as e:
                     output_text.insert(tk.END, f"Erro ao mover subpasta '{folder}' de '{item['company']}': {e}\n")
-        
-        # Apaga a pasta da empresa em Downloads se algo foi movido
-        if moved_something:
-            try:
-                shutil.rmtree(source_path)
-                output_text.insert(tk.END, f"Pasta de origem '{source_path}' apagada com sucesso.\n")
-            except Exception as e:
-                output_text.insert(tk.END, f"Erro ao apagar pasta de origem '{source_path}': {e}\n")
-        else:
-            output_text.insert(tk.END, f"Nada foi movido para '{item['company']}', pasta de origem não apagada.\n")
     
     output_text.insert(tk.END, "Concluído!\n")
 
 def populate_gui(window, frame, output_text, check_vars, target_vars):
-    # Limpa as listas de variáveis pra evitar acumular estados antigos
-    check_vars.clear()
-    target_vars.clear()
-    
-    results = scan_paths(output_text)
+    results = scan_paths()
     if not results:
-        messagebox.showerror("Erro", "Nenhuma pasta de empresa encontrada em Downloads!")
+        messagebox.showerror("❌ Erro", "Nenhuma pasta de empresa encontrada em Downloads!")
         window.destroy()
         return
-    
+
     for widget in frame.winfo_children():
         widget.destroy()
-    
-    tk.Label(frame, text="Empresa", width=30, anchor="w").grid(row=0, column=0)
-    tk.Label(frame, text="Destino", width=10).grid(row=0, column=1)
-    tk.Label(frame, text="Caminho", width=90, anchor="w").grid(row=0, column=2)
-    tk.Label(frame, text="Aprovar", width=10).grid(row=0, column=3)
-    
+
+    header_style = {"font": ("Segoe UI", 10, "bold")}
+    tk.Label(frame, text="🏢 Empresa", width=30, anchor="w", **header_style).grid(row=0, column=0)
+    tk.Label(frame, text="🎯 Destino", width=10, **header_style).grid(row=0, column=1)
+    tk.Label(frame, text="📁 Caminho", width=90, anchor="w", **header_style).grid(row=0, column=2)
+    tk.Label(frame, text="✅ Aprovar", width=10, **header_style).grid(row=0, column=3)
+
     def update_path(row, target_var, path_label, result):
         target = target_var.get()
         result["target"] = target
         result["path"] = result["prestados_path"] if target == "PRESTADOS" else result["ar_path"]
-        path_label.config(text=result["path"][:89] if result["path"] else "Erro: Caminho não encontrado")
-    
+        path_label.config(text=result["path"][:89] if result["path"] else "❌ Caminho não encontrado")
+
     for i, item in enumerate(results):
         tk.Label(frame, text=item["company"][:29], width=30, anchor="w").grid(row=i+1, column=0)
         target_var = tk.StringVar(value=item["target"])
-        ttk.Combobox(frame, textvariable=target_var, values=["PRESTADOS", "AR"], width=10, state="readonly").grid(row=i+1, column=1)
+        combo = ttk.Combobox(frame, textvariable=target_var, values=["PRESTADOS", "AR"], width=10, state="readonly")
+        combo.grid(row=i+1, column=1)
         target_vars.append(target_var)
-        path_label = tk.Label(frame, text=item["path"][:89] if item["path"] else "Erro: Caminho não encontrado", width=90, anchor="w")
+        path_label = tk.Label(frame, text=item["path"][:89] if item["path"] else "❌ Caminho não encontrado", width=90, anchor="w")
         path_label.grid(row=i+1, column=2)
         target_var.trace("w", lambda *args, r=i, tv=target_var, pt=path_label, res=item: update_path(r, tv, pt, res))
         var = tk.BooleanVar(value=item["approved"])
         tk.Checkbutton(frame, variable=var).grid(row=i+1, column=3)
         check_vars.append(var)
-    
+
     def approve_all():
         for var in check_vars:
             var.set(True)
-    
-    def clear_logs():
-        output_text.delete(1.0, tk.END)
-    
-    def refresh():
-        populate_gui(window, frame, output_text, check_vars, target_vars)
-    
-    # Adiciona os botões
-    button_frame = tk.Frame(window)
-    button_frame.pack(pady=5)
-    tk.Button(button_frame, text="Sim para Todos", command=approve_all).pack(side=tk.LEFT, padx=5)
-    tk.Button(button_frame, text="Atualizar", command=refresh).pack(side=tk.LEFT, padx=5)
-    tk.Button(button_frame, text="Limpar Logs", command=clear_logs).pack(side=tk.LEFT, padx=5)
-    tk.Button(button_frame, text="Mover Arquivos", command=lambda: move_files(results, output_text)).pack(side=tk.LEFT, padx=5)
+
+    tk.Button(window, text="✅ Aprovar Todos", command=approve_all).pack(pady=5)
+
+    def start_move():
+        for i, var in enumerate(check_vars):
+            results[i]["approved"] = var.get()
+        move_files(results, output_text)
+
+    tk.Button(window, text="📦 Mover Arquivos", command=start_move).pack(pady=5)
 
 def create_gui():
     window = tk.Tk()
-    window.title("Movimentação de Arquivos")
-    window.geometry("1200x600")
-    
+    window.title("📁 Movimentação de Arquivos")
+    window.geometry("1200x650")
+
     frame = tk.Frame(window)
     frame.pack(fill="both", expand=True, padx=10, pady=10)
-    
-    tk.Label(frame, text="CAÇANDO SUAS PASTAS...", font=("Arial", 14)).pack(pady=20)
-    
-    output_text = scrolledtext.ScrolledText(window, height=10)
+
+    tk.Label(frame, text="🔍 CAÇANDO SUAS PASTAS...", font=("Segoe UI", 14)).pack(pady=20)
+
+    output_text = scrolledtext.ScrolledText(window, height=10, font=("Consolas", 10))
     output_text.pack(fill="both", expand=True, padx=10, pady=5)
-    
+
     check_vars = []
     target_vars = []
-    
+
     threading.Thread(target=populate_gui, args=(window, frame, output_text, check_vars, target_vars), daemon=True).start()
-    
+
     window.mainloop()
 
 def main():
